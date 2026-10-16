@@ -6,6 +6,9 @@ platforms = ["linux-aarch64"]
 version = "0.1.0"
 
 [tasks]
+extend = "sudo /home/team455/.pixi/bin/pixi run python extend_slowly.py"
+retract = "sudo /home/team455/.pixi/bin/pixi run python retract_slowly.py"
+demo = "sudo /home/team455/.pixi/bin/pixi run python listen_and_drill_process.py"
 
 [dependencies]
 python = ">=3.12.15,<3.13"
@@ -14,3 +17,4 @@ paho-mqtt = ">=2.1.0,<3"
 [pypi-dependencies]
 gpiozero = ">=2.0.1.post3, <3"
 lgpio = ">=0.2.2.0, <0.3"
+keyboard = ">=0.13.5, <0.14"
