@@ -15,6 +15,9 @@ MQTT_BROKER = "localhost"
 MOTOR_2_PIN = 13
 manual_stop = False
 
+# keys that do NOT stop the program
+IGNORED_KEYS = {"ctrl", "left ctrl", "right ctrl", "b", "up", "down", "left", "right", "shift", "n", "p", "b"}
+
 # RULE FOR STARTING DRILLING
 DRILL_TRIGGER_COUNT = 2 # number of sub 2.0 bar readings needed before drilling starts (debouncing)
 GAUGE_WINDOW_SECONDS = 11 # readings must be within this many seconds of each other, otherwise reset count
@@ -26,6 +29,9 @@ cooldown_until = 0.0 # time.time() value before which MQTT messages are ignored
 
 # KEYBOARD ESCAPE CALLBACK
 def handle_key_press(event):
+    if event.name is None or event.name.lower() in IGNORED_KEYS:
+        return
+
     # Tell this function to modify the global variable
     global manual_stop
     manual_stop = True
