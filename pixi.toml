@@ -1,0 +1,16 @@
+[workspace]
+authors = ["Allen Saji <allensaji012@gmail.com>"]
+channels = ["conda-forge"]
+name = "drill-subsystem"
+platforms = ["linux-aarch64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = ">=3.12.15,<3.13"
+paho-mqtt = ">=2.1.0,<3"
+
+[pypi-dependencies]
+gpiozero = ">=2.0.1.post3, <3"
+lgpio = ">=0.2.2.0, <0.3"
