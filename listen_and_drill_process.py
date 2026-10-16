@@ -12,12 +12,17 @@ import time
 MQTT_TOPIC = "gcs/drone_log"
 MQTT_BROKER = "localhost"
 
-MOTOR_2_PIN = 13 
+MOTOR_2_PIN = 13
 manual_stop = False
 
 # RULE FOR STARTING DRILLING
-start_drilling_count = 0 # NEEDs TO GET TO 3 BEFORE DRILLING STARTS (debouncing)
-# also needs to get the three within 5 seconds of each other, otherwise reset count
+DRILL_TRIGGER_COUNT = 2 # number of sub 2.0 bar readings needed before drilling starts (debouncing)
+GAUGE_WINDOW_SECONDS = 11 # readings must be within this many seconds of each other, otherwise reset count
+COOLDOWN_SECONDS = 10 # ignore MQTT messages for this long after a drill finishes
+
+start_drilling_count = 0
+time_last_gauge_detected = None
+cooldown_until = 0.0 # time.time() value before which MQTT messages are ignored
 
 # KEYBOARD ESCAPE CALLBACK
 def handle_key_press(event):
@@ -29,22 +34,37 @@ def handle_key_press(event):
 ####### MQTT CALLBACKS
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"Connected to MQTT broker with code: {reason_code}")
-    # We subscribe inside on_connect so that if the connection drops, 
+    # We subscribe inside on_connect so that if the connection drops,
     # it automatically re-subscribes when it reconnects.
     client.subscribe(MQTT_TOPIC)
     print(f"Subscribed to topic: {MQTT_TOPIC}")
 
 def on_message(client, userdata, msg):
+    global cooldown_until
+
+    # ignore everything during the cooldown after a drill
+    if time.time() < cooldown_until:
+        return
+
     # msg.payload arrives as bytes, so we decode it into a standard string
     command = msg.payload.decode('utf-8').strip().lower()
-    
-    print(f"\n[!] Message received on {msg.topic}: {command}")
 
-    extract_pressure(command)
+    # print(f"\n[!] Message received on {msg.topic}: {command}")
 
-    if start_drilling_count >= 3:
+    # a malformed message must not kill the MQTT thread
+    try:
+        pressure = extract_pressure(command)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        print(f"[!] Ignoring bad message: {e}")
+        return
+
+    if start_drilling_count >= DRILL_TRIGGER_COUNT:
         print(f"[!] Pressure {pressure} bar is below threshold. Drilling hole...")
         drill_hole(userdata)  # userdata is the servo object
+        reset_trigger_state()
+        # messages that arrived while drilling will land inside this window and be ignored
+        cooldown_until = time.time() + COOLDOWN_SECONDS
+        print(f"Drill complete. Ignoring MQTT for {COOLDOWN_SECONDS}s...")
 
 
 ######## END MQTT CALLBACKS
@@ -52,12 +72,12 @@ def on_message(client, userdata, msg):
 ##### STARTUP FUNCTIONS #####
 def setup_motor():
     servo = Servo(MOTOR_2_PIN)
-    servo.value = 0.0  # Initialize at 0 speed
+    servo.detach() # to ensure no movement
     return servo
 
 def setup_mqtt(servo):
     mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    
+
     # Attach the servo so callbacks can access it
     mqtt_client.user_data_set(servo)
 
@@ -79,7 +99,9 @@ def setup_keyboard():
 
 ##### ACTION FUNCTIONS ####
 def extract_pressure(raw_command):
-    static time_last_gauge_detected = None
+    global time_last_gauge_detected
+    global start_drilling_count
+
     pressure = None
 
     command = json.loads(raw_command)
@@ -89,29 +111,41 @@ def extract_pressure(raw_command):
             pressure = float(match.group(1))
             print(f"Extracted pressure: {pressure} bar")
 
-            # if last gauge reader was less than 5 seconds ago, reset count
-            if time_last_gauge_detected is None or (time.time() - time_last_gauge_detected) < 5:
+            # if last gauge reading was too long ago, start the count over
+            if time_last_gauge_detected is not None and (time.time() - time_last_gauge_detected) >= GAUGE_WINDOW_SECONDS:
+                start_drilling_count = 0
 
-                if pressure <= 2.0:
-                    global start_drilling_count
-                    start_drilling_count += 1
+            if pressure <= 2.0:
+                start_drilling_count += 1
+            else:
+                start_drilling_count = 0
         else:
+            start_drilling_count = 0
             print("No pressure detected in gauge")
-        
+
         time_last_gauge_detected = time.time()
     return pressure
+
+def reset_trigger_state():
+    global start_drilling_count
+    global time_last_gauge_detected
+    start_drilling_count = 0
+    time_last_gauge_detected = None
 
 def drill_hole(servo):
     print("Sending servo command")
 
-    # drive servo out then in
-    servo.value = -0.4
-    sleep(2)
-    servo.value = 0.65
-    sleep(1.49)
+    try:
+        # drive servo out then in
+        servo.value = -0.4
+        sleep(2)
+        servo.value = 0.65
+        sleep(1.49)
+    finally:
+        # always stop sending pulses, even if something goes wrong mid-move
+        servo.detach()
+        print("Stopping servo")
 
-    servo.value = 0.0
-    print("Stopping servo")
 ##### END ACTION FUNCTIONS ####
 
 
@@ -120,14 +154,9 @@ def main():
     mqtt_client = setup_mqtt(servo)
     setup_keyboard()
 
-
-
-
-
     while not manual_stop:
         sleep(0.05)
-    
-    servo.value = 0.0
+
     servo.detach()
 
     # shutdown process
